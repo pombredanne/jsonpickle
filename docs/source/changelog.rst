@@ -1,5 +1,33 @@
 Change Log
 ==========
+Version 0.7.2 - TBD, Summer 2014
+
+    * We now propery serialize classes that inherit from classes
+      that use `__slots__` and add additional slots in the derived class.
+
+Version 0.7.1 - May 6, 2014
+------------------------------
+
+    * Added support for Python 3.4.
+    * Added support for :class:`posix.stat_result`.
+
+Version 0.7.0 - March 15, 2014
+------------------------------
+
+    * Added ``handles`` decorator to :class:`jsonpickle.handlers.BaseHandler`,
+      enabling simple declaration of a handler for a class.
+    * `__getstate__()` and `__setstate__()` are now honored
+      when pickling objects that subclass :class:`dict`.
+    * jsonpickle can now serialize :class:`collections.Counter` objects.
+    * Object references are properly handled when using integer keys.
+    * Object references are now supported when using custom handlers.
+    * Decimal objects are supported in Python 3.
+    * jsonpickle's "fallthrough-on-error" behavior can now be disabled.
+    * Simpler API for registering custom handlers.
+    * A new "safe-mode" is provided which avoids eval().
+      Backwards-compatible deserialization of repr-serialized objects
+      is disabled in this mode.  e.g. `decode(string, safe=True)`
+
 Version 0.6.1 - August 25, 2013
 -------------------------------
 

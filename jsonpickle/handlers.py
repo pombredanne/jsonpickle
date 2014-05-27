@@ -24,6 +24,7 @@ import sys
 import datetime
 import time
 import collections
+import decimal
 
 from jsonpickle import util
 from jsonpickle.compat import unicode
@@ -73,6 +74,19 @@ class BaseHandler(object):
         raise NotImplementedError('You must implement restore() in %s' %
                                   self.__class__)
 
+    @classmethod
+    def handles(self, cls):
+        """
+        Register this handler for the given class. Suitable as a decorator,
+        e.g.::
+
+            @SimpleReduceHandler.handles
+            class MyCustomClass:
+                def __reduce__(self):
+                    ...
+        """
+        registry.register(cls, self)
+        return cls
 
 
 class DatetimeHandler(BaseHandler):
@@ -105,9 +119,9 @@ class DatetimeHandler(BaseHandler):
         return cls.__new__(cls, *params)
 
 
-register(datetime.datetime, DatetimeHandler)
-register(datetime.date, DatetimeHandler)
-register(datetime.time, DatetimeHandler)
+DatetimeHandler.handles(datetime.datetime)
+DatetimeHandler.handles(datetime.date)
+DatetimeHandler.handles(datetime.time)
 
 
 class SimpleReduceHandler(BaseHandler):
@@ -118,21 +132,52 @@ class SimpleReduceHandler(BaseHandler):
     """
 
     def flatten(self, obj, data):
-        pickler = self.context
-        if not pickler.unpicklable:
-            return unicode(obj)
-        flatten = pickler.flatten
+        flatten = self.context.flatten
         data['__reduce__'] = [flatten(i, reset=False) for i in obj.__reduce__()]
         return data
 
     def restore(self, obj):
-        unpickler = self.context
-        restore = unpickler.restore
+        restore = self.context.restore
         factory, args = [restore(i, reset=False) for i in obj['__reduce__']]
         return factory(*args)
 
 
-register(time.struct_time, SimpleReduceHandler)
-register(datetime.timedelta, SimpleReduceHandler)
+class OrderedDictReduceHandler(SimpleReduceHandler):
+    """Serialize OrderedDict on Python 3.4+
+
+    Python 3.4+ returns multiple entries in an OrderedDict's
+    reduced form.  Previous versions return a two-item tuple.
+    OrderedDictReduceHandler makes the formats compatible.
+
+    """
+    def flatten(self, obj, data):
+        # __reduce__() on older pythons returned a list of
+        # [key, value] list pairs inside a tuple.
+        # Recreate that structure so that the file format
+        # is consistent between python versions.
+        flatten = self.context.flatten
+        reduced = obj.__reduce__()
+        factory = flatten(reduced[0], reset=False)
+        pairs = [list(x) for x in reduced[-1]]
+        args = flatten((pairs,), reset=False)
+        data['__reduce__'] = [factory, args]
+        return data
+
+
+SimpleReduceHandler.handles(time.struct_time)
+SimpleReduceHandler.handles(datetime.timedelta)
 if sys.version_info >= (2, 7):
-    register(collections.OrderedDict, SimpleReduceHandler)
+    SimpleReduceHandler.handles(collections.Counter)
+    if sys.version_info >= (3, 4):
+        OrderedDictReduceHandler.handles(collections.OrderedDict)
+    else:
+        SimpleReduceHandler.handles(collections.OrderedDict)
+
+if sys.version_info >= (3, 0):
+    SimpleReduceHandler.handles(decimal.Decimal)
+
+try:
+    import posix
+    SimpleReduceHandler.handles(posix.stat_result)
+except ImportError:
+    pass

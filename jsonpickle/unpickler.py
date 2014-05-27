@@ -17,10 +17,11 @@ from jsonpickle.compat import set
 from jsonpickle.backend import JSONBackend
 
 
-def decode(string, backend=None, context=None, keys=False, reset=True):
+def decode(string, backend=None, context=None, keys=False, reset=True,
+           safe=False):
     backend = _make_backend(backend)
     if context is None:
-        context = Unpickler(keys=keys, backend=backend)
+        context = Unpickler(keys=keys, backend=backend, safe=safe)
     return context.restore(backend.decode(string), reset=reset)
 
 
@@ -30,13 +31,18 @@ def _make_backend(backend):
     else:
         return backend
 
+def _supports_getstate(obj, instance):
+    return hasattr(instance, '__setstate__') and has_tag(obj, tags.STATE)
+
 
 class Unpickler(object):
-    def __init__(self, backend=None, keys=False):
+
+    def __init__(self, backend=None, keys=False, safe=False):
         ## The current recursion depth
         ## Maps reference names to object instances
         self.backend = _make_backend(backend)
         self.keys = keys
+        self.safe = safe
 
         self._namedict = {}
         ## The namestack grows whenever we recurse into a child object
@@ -105,6 +111,9 @@ class Unpickler(object):
         return typeref
 
     def _restore_repr(self, obj):
+        if self.safe:
+            # eval() is not allowed in safe mode
+            return None
         obj = loadrepr(obj[tags.REPR])
         return self._mkref(obj)
 
@@ -146,11 +155,6 @@ class Unpickler(object):
         return self._restore_object_instance_variables(obj, instance)
 
     def _restore_object_instance_variables(self, obj, instance):
-        if hasattr(instance, '__setstate__') and has_tag(obj, tags.STATE):
-            state = self._restore(obj[tags.STATE])
-            instance.__setstate__(state)
-            return instance
-
         for k, v in sorted(obj.items(), key=util.itemgetter):
             # ignore the reserved attribute
             if k in tags.RESERVED:
@@ -175,6 +179,14 @@ class Unpickler(object):
                 for v in obj[tags.SEQ]:
                     instance.add(self._restore(v))
 
+        if _supports_getstate(obj, instance):
+            self._restore_state(obj, instance)
+
+        return instance
+
+    def _restore_state(self, obj, instance):
+        state = self._restore(obj[tags.STATE])
+        instance.__setstate__(state)
         return instance
 
     def _restore_list(self, obj):

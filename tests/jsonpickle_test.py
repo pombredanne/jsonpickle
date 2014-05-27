@@ -14,6 +14,7 @@ import os
 import time
 import unittest
 import sys
+import decimal
 
 import jsonpickle
 
@@ -26,6 +27,8 @@ from jsonpickle.compat import PY32
 from jsonpickle._samples import (
         BrokenReprThing,
         DictSubclass,
+        GetstateDict,
+        GetstateReturnsList,
         ListSubclass,
         ListSubclassWithInit,
         NamedTuple,
@@ -34,6 +37,7 @@ from jsonpickle._samples import (
         SetSubclass,
         Thing,
         ThingWithSlots,
+        ThingWithInheritedSlots,
         ThingWithProps,
         )
 
@@ -42,6 +46,10 @@ class PicklingTestCase(unittest.TestCase):
     def setUp(self):
         self.pickler = jsonpickle.pickler.Pickler()
         self.unpickler = jsonpickle.unpickler.Unpickler()
+
+    def tearDown(self):
+        self.pickler.reset()
+        self.unpickler.reset()
 
     def test_string(self):
         self.assertEqual('a string', self.pickler.flatten('a string'))
@@ -221,6 +229,27 @@ class PicklingTestCase(unittest.TestCase):
         self.assertEqual(old_nt[1], new_nt[1])
         self.assertEqual(old_nt[2], new_nt[2])
 
+    def test_counter_roundtrip(self):
+        if sys.version_info < (2, 7):
+            # collections.Counter was introduced in Python 2.7
+            return
+        counter = collections.Counter({1: 2})
+        encoded = jsonpickle.encode(counter)
+        decoded = jsonpickle.decode(encoded)
+        self.assertTrue(type(decoded) is collections.Counter)
+        # the integer key becomes a string when keys=False
+        self.assertEqual(decoded.get('1'), 2)
+
+    def test_counter_roundtrip_with_keys(self):
+        if sys.version_info < (2, 7):
+            # collections.Counter was introduced in Python 2.7
+            return
+        counter = collections.Counter({1: 2})
+        encoded = jsonpickle.encode(counter, keys=True)
+        decoded = jsonpickle.decode(encoded, keys=True)
+        self.assertTrue(type(decoded) is collections.Counter)
+        self.assertEqual(decoded.get(1), 2)
+
     def test_class(self):
         inst = Thing('test name')
         inst.child = Thing('child name')
@@ -305,12 +334,37 @@ class PicklingTestCase(unittest.TestCase):
         self.assertTrue(newobj.a)
         self.assertFalse(newobj.b)
 
+    def test_newstyleslots_inherited(self):
+        obj = ThingWithInheritedSlots(True, False, None)
+        jsonstr = jsonpickle.encode(obj)
+        newobj = jsonpickle.decode(jsonstr)
+        self.assertTrue(newobj.a)
+        self.assertFalse(newobj.b)
+        self.assertEqual(newobj.c, None)
+
+    def test_newstyleslots_inherited_deleted_attr(self):
+        obj = ThingWithInheritedSlots(True, False, None)
+        del obj.c
+        jsonstr = jsonpickle.encode(obj)
+        newobj = jsonpickle.decode(jsonstr)
+        self.assertTrue(newobj.a)
+        self.assertFalse(newobj.b)
+        self.assertFalse(hasattr(newobj, 'c'))
+
     def test_newstyleslots_with_children(self):
         obj = ThingWithSlots(Thing('a'), Thing('b'))
         jsonstr = jsonpickle.encode(obj)
         newobj = jsonpickle.decode(jsonstr)
         self.assertEqual(newobj.a.name, 'a')
         self.assertEqual(newobj.b.name, 'b')
+
+    def test_newstyleslots_with_children_inherited(self):
+        obj = ThingWithInheritedSlots(Thing('a'), Thing('b'), Thing('c'))
+        jsonstr = jsonpickle.encode(obj)
+        newobj = jsonpickle.decode(jsonstr)
+        self.assertEqual(newobj.a.name, 'a')
+        self.assertEqual(newobj.b.name, 'b')
+        self.assertEqual(newobj.c.name, 'c')
 
     def test_oldstyleclass(self):
         obj = OldStyleClass()
@@ -358,6 +412,70 @@ class PicklingTestCase(unittest.TestCase):
 
         inflated = self.unpickler.restore(flattened)
         self.assertEqual(1, inflated['key1'])
+
+    def test_getstate_dict_subclass_structure(self):
+        obj = GetstateDict('test')
+        obj['key1'] = 1
+
+        flattened = self.pickler.flatten(obj)
+        self.assertTrue(tags.OBJECT in flattened)
+        self.assertEqual('jsonpickle._samples.GetstateDict',
+                         flattened[tags.OBJECT])
+        self.assertTrue(tags.STATE in flattened)
+        self.assertTrue(tags.TUPLE in flattened[tags.STATE])
+        self.assertEqual(['test', {'key1': 1}],
+                         flattened[tags.STATE][tags.TUPLE])
+
+    def test_getstate_dict_subclass_roundtrip_simple(self):
+        obj = GetstateDict('test')
+        obj['key1'] = 1
+
+        flattened = self.pickler.flatten(obj)
+        inflated = self.unpickler.restore(flattened)
+
+        self.assertEqual(1, inflated['key1'])
+        self.assertEqual(inflated.name, 'test')
+
+    def test_getstate_dict_subclass_roundtrip_cyclical(self):
+        obj = GetstateDict('test')
+        obj['key1'] = 1
+
+        # The "name" field of obj2 points to obj (reference)
+        obj2 = GetstateDict(obj)
+        # The "obj2" key in obj points to obj2 (cyclical reference)
+        obj['obj2'] = obj2
+
+        flattened = self.pickler.flatten(obj)
+        inflated = self.unpickler.restore(flattened)
+
+        # The dict must be preserved
+        self.assertEqual(1, inflated['key1'])
+
+        # __getstate__/__setstate__ must have been run
+        self.assertEqual(inflated.name, 'test')
+        self.assertEqual(inflated.active, True)
+        self.assertEqual(inflated['obj2'].active, True)
+
+        # The reference must be preserved
+        self.assertTrue(inflated is inflated['obj2'].name)
+
+    def test_getstate_list_simple(self):
+        obj = GetstateReturnsList(1, 2)
+        flattened = self.pickler.flatten(obj)
+        inflated = self.unpickler.restore(flattened)
+        self.assertEqual(inflated.x, 1)
+        self.assertEqual(inflated.y, 2)
+
+    def test_getstate_list_inside_list(self):
+        obj1 = GetstateReturnsList(1, 2)
+        obj2 = GetstateReturnsList(3, 4)
+        obj = [obj1, obj2]
+        flattened = self.pickler.flatten(obj)
+        inflated = self.unpickler.restore(flattened)
+        self.assertEqual(inflated[0].x, 1)
+        self.assertEqual(inflated[0].y, 2)
+        self.assertEqual(inflated[1].x, 3)
+        self.assertEqual(inflated[1].y, 4)
 
     def test_tuple_notunpicklable(self):
         self.pickler.unpicklable = False
@@ -426,6 +544,14 @@ class PicklingTestCase(unittest.TestCase):
         flattened = self.pickler.flatten(obj)
         inflated = self.unpickler.restore(flattened)
         self.assertEqual(inflated.themodule, os)
+
+    def test_thing_with_module_safe(self):
+        obj = Thing('with-module')
+        obj.themodule = os
+        flattened = self.pickler.flatten(obj)
+        self.unpickler.safe = True
+        inflated = self.unpickler.restore(flattened)
+        self.assertEqual(inflated.themodule, None)
 
     def test_thing_with_submodule(self):
         from distutils import sysconfig
@@ -525,6 +651,12 @@ class PicklingTestCase(unittest.TestCase):
         actual = jsonpickle.decode(json)
         self.assertEqual(expect, actual)
         self.assertTrue(expect is actual)
+
+    def test_decimal(self):
+        obj = decimal.Decimal(1)
+        flattened = self.pickler.flatten(obj)
+        inflated = self.unpickler.restore(flattened)
+        self.assertEqual(type(inflated), decimal.Decimal)
 
 
 class JSONPickleTestCase(unittest.TestCase):
@@ -804,6 +936,24 @@ class JSONPickleTestCase(unittest.TestCase):
 
         self.assertEqual(d, decoded)
 
+    def test_ordered_dict_int_keys(self):
+        if sys.version_info < (2, 7):
+            return
+        d = {
+            1: collections.OrderedDict([(2, -2), (3, -3)]),
+            4: collections.OrderedDict([(5, -5), (6, -6)]),
+        }
+        encoded = jsonpickle.encode(d, keys=True)
+        decoded = jsonpickle.decode(encoded, keys=True)
+
+        self.assertEqual(collections.OrderedDict, type(decoded[1]))
+        self.assertEqual(collections.OrderedDict, type(decoded[4]))
+        self.assertEqual(-2, decoded[1][2])
+        self.assertEqual(-3, decoded[1][3])
+        self.assertEqual(-5, decoded[4][5])
+        self.assertEqual(-6, decoded[4][6])
+        self.assertEqual(d, decoded)
+
     def test_make_refs_disabled_list(self):
         obj_a = Thing('foo')
         obj_b = Thing('bar')
@@ -829,6 +979,16 @@ class JSONPickleTestCase(unittest.TestCase):
         self.assertEqual(decoded.b[0:3], '[1,')
         self.assertEqual(decoded.a[1][0:3], '[1,')
         self.assertEqual(decoded.a[2][0][0:3], '[1,')
+
+    def test_posix_stat_result(self):
+        try:
+            import posix
+        except ImportError:
+            return
+        expect = posix.stat(__file__)
+        encoded = jsonpickle.encode(expect)
+        actual = jsonpickle.decode(encoded)
+        self.assertEqual(expect, actual)
 
 
 # Test classes for ExternalHandlerTestCase
