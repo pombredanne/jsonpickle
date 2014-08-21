@@ -31,8 +31,45 @@ def _make_backend(backend):
     else:
         return backend
 
-def _supports_getstate(obj, instance):
-    return hasattr(instance, '__setstate__') and has_tag(obj, tags.STATE)
+
+class _Proxy(object):
+    """Proxies are dummy objects that are later replaced by real instances
+
+    The `restore()` function has to solve a tricky problem when pickling
+    objects with cyclical references -- the parent instance does not yet
+    exist.
+
+    The problem is that `__getnewargs__()`, `__getstate__()`, custom handlers,
+    and cyclical objects graphs are allowed to reference the yet-to-be-created
+    object via the referencing machinery.
+
+    In other words, objects are allowed to depend on themselves for
+    construction!
+
+    We solve this problem by placing dummy Proxy objects into the referencing
+    machinery so that we can construct the child objects before constructing
+    the parent.  Objects are initially created with Proxy attribute values
+    instead of real references.
+
+    We collect all objects that contain references to proxies and run
+    a final sweep over them to swap in the real instance.  This is done
+    at the very end of the top-level `restore()`.
+
+    The `instance` attribute below is replaced with the real instance
+    after `__new__()` has been used to construct the object and is used
+    when swapping proxies with real instances.
+
+    """
+    def __init__(self):
+        self.instance = None
+
+
+def _obj_setattr(obj, attr, proxy):
+    setattr(obj, attr, proxy.instance)
+
+
+def _obj_setvalue(obj, idx, proxy):
+    obj[idx] = proxy.instance
 
 
 class Unpickler(object):
@@ -51,6 +88,7 @@ class Unpickler(object):
         ## Maps objects to their index in the _objs list
         self._obj_to_idx = {}
         self._objs = []
+        self._proxies = []
 
     def reset(self):
         """Resets the object's internal state.
@@ -59,6 +97,7 @@ class Unpickler(object):
         self._namestack = []
         self._obj_to_idx = {}
         self._objs = []
+        self._proxies = []
 
     def restore(self, obj, reset=True):
         """Restores a flattened object to its original python state.
@@ -73,7 +112,16 @@ class Unpickler(object):
         """
         if reset:
             self.reset()
-        return self._restore(obj)
+        value = self._restore(obj)
+        if reset:
+            self._finalize()
+
+        return value
+
+    def _finalize(self):
+        """Replace proxies with their corresponding instances"""
+        for (obj, attr, proxy, method) in self._proxies:
+            method(obj, attr, proxy)
 
     def _restore(self, obj):
         if has_tag(obj, tags.ID):
@@ -86,6 +134,8 @@ class Unpickler(object):
             restore = self._restore_repr
         elif has_tag(obj, tags.OBJECT):
             restore = self._restore_object
+        elif has_tag(obj, tags.FUNCTION):
+            restore = self._restore_function
         elif util.is_list(obj):
             restore = self._restore_list
         elif has_tag(obj, tags.TUPLE):
@@ -128,9 +178,26 @@ class Unpickler(object):
         else:
             return self._restore_object_instance(obj, cls)
 
+    def _restore_function(self, obj):
+        return loadclass(obj[tags.FUNCTION])
+
+    def _loadfactory(self, obj):
+        try:
+            default_factory = obj['default_factory']
+        except KeyError:
+            return None
+        del obj['default_factory']
+        return self._restore(default_factory)
+
     def _restore_object_instance(self, obj, cls):
-        factory = loadfactory(obj)
+        factory = self._loadfactory(obj)
         args = getargs(obj)
+
+        # This is a placeholder proxy object which allows child objects to
+        # reference the parent object before it has been instantiated.
+        proxy = _Proxy()
+        self._mkref(proxy)
+
         if args:
             args = self._restore(args)
         try:
@@ -148,18 +215,23 @@ class Unpickler(object):
             except TypeError: # fail gracefully
                 return self._mkref(obj)
 
-        self._mkref(instance) # allow references in downstream objects
+        proxy.instance = instance
+        self._swapref(proxy, instance)
+
         if isinstance(instance, tuple):
             return instance
 
         return self._restore_object_instance_variables(obj, instance)
 
     def _restore_object_instance_variables(self, obj, instance):
+        restore_key = self._restore_key_fn()
+        method = _obj_setattr
         for k, v in sorted(obj.items(), key=util.itemgetter):
             # ignore the reserved attribute
             if k in tags.RESERVED:
                 continue
             self._namestack.append(k)
+            k = restore_key(k)
             # step into the namespace
             value = self._restore(v)
             if (util.is_noncomplex(instance) or
@@ -167,6 +239,12 @@ class Unpickler(object):
                 instance[k] = value
             else:
                 setattr(instance, k, value)
+
+            # This instance has an instance variable named `k` that is
+            # currently a proxy and must be replaced
+            if type(value) is _Proxy:
+                self._proxies.append((instance, k, value, method))
+
             # step out
             self._namestack.pop()
 
@@ -179,14 +257,20 @@ class Unpickler(object):
                 for v in obj[tags.SEQ]:
                     instance.add(self._restore(v))
 
-        if _supports_getstate(obj, instance):
-            self._restore_state(obj, instance)
+        if has_tag(obj, tags.STATE):
+            instance = self._restore_state(obj, instance)
 
         return instance
 
     def _restore_state(self, obj, instance):
-        state = self._restore(obj[tags.STATE])
-        instance.__setstate__(state)
+        if hasattr(instance, '__setstate__'):
+            state = self._restore(obj[tags.STATE])
+            instance.__setstate__(state)
+        else:
+            # __setstate__ is not implemented so that means that the best
+            # we can do is return the result of __getstate__() rather than
+            # return an empty shell of an object.
+            instance = self._restore(obj[tags.STATE])
         return instance
 
     def _restore_list(self, obj):
@@ -194,6 +278,11 @@ class Unpickler(object):
         self._mkref(parent)
         children = [self._restore(v) for v in obj]
         parent.extend(children)
+        method = _obj_setvalue
+        proxies = [(parent, idx, value, method)
+                    for idx, value in enumerate(parent)
+                        if type(value) is _Proxy]
+        self._proxies.extend(proxies)
         return parent
 
     def _restore_tuple(self, obj):
@@ -204,15 +293,36 @@ class Unpickler(object):
 
     def _restore_dict(self, obj):
         data = {}
+        restore_key = self._restore_key_fn()
         for k, v in sorted(obj.items(), key=util.itemgetter):
             self._namestack.append(k)
-            if self.keys and k.startswith(tags.JSON_KEY):
-                k = decode(k[len(tags.JSON_KEY):],
-                           backend=self.backend, context=self,
-                           keys=True, reset=False)
+            k = restore_key(k)
             data[k] = self._restore(v)
             self._namestack.pop()
         return data
+
+    def _restore_key_fn(self):
+        """Return a callable that restores keys
+
+        This function is responsible for restoring non-string keys
+        when we are decoding with `keys=True`.
+
+        """
+        # This function is called before entering a tight loop
+        # where the returned function will be called.
+        # We return a specific function after checking self.keys
+        # instead of doing so in the body of the function to
+        # avoid conditional branching inside a tight loop.
+        if self.keys:
+            def restore_key(key):
+                if key.startswith(tags.JSON_KEY):
+                    key = decode(key[len(tags.JSON_KEY):],
+                                 backend=self.backend, context=self,
+                                 keys=True, reset=False)
+                return key
+        else:
+            restore_key = lambda key: key
+        return restore_key
 
     def _refname(self):
         """Calculates the name of the current location in the JSON stack.
@@ -263,6 +373,16 @@ class Unpickler(object):
             self._namedict[self._refname()] = obj
         return obj
 
+    def _swapref(self, proxy, instance):
+        proxy_id = id(proxy)
+        instance_id = id(instance)
+
+        self._obj_to_idx[instance_id] = self._obj_to_idx[proxy_id]
+        del self._obj_to_idx[proxy_id]
+
+        self._objs[-1] = instance
+        self._namedict[self._refname()] = instance
+
 
 def loadclass(module_and_name):
     """Loads the module and returns the class.
@@ -286,25 +406,11 @@ def loadclass(module_and_name):
         return None
 
 
-def loadfactory(obj):
-    try:
-        default_factory = obj['default_factory']
-    except KeyError:
-        return None
-    try:
-        type_tag = default_factory[tags.TYPE]
-    except:
-        return None
-
-    typeref = loadclass(type_tag)
-    if typeref:
-        del obj['default_factory']
-        return typeref
-
-    return None
-
-
 def getargs(obj):
+    """Return arguments suitable for __new__()"""
+    # Let saved newargs take precedence over everything
+    if has_tag(obj, tags.NEWARGS):
+        return obj[tags.NEWARGS]
     try:
         seq_list = obj[tags.SEQ]
         obj_dict = obj[tags.OBJECT]

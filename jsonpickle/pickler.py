@@ -175,7 +175,10 @@ class Pickler(object):
         if util.is_object(obj):
             return self._ref_obj_instance
 
-        # else, what else? (methods, functions, old style classes...)
+        if util.is_module_function(obj):
+            return self._flatten_function
+
+        # instance methods, lambdas, old style classes...
         return None
 
     def _ref_obj_instance(self, obj):
@@ -197,20 +200,23 @@ class Pickler(object):
         has_class = hasattr(obj, '__class__')
         has_dict = hasattr(obj, '__dict__')
         has_slots = not has_dict and hasattr(obj, '__slots__')
+        has_getnewargs = hasattr(obj, '__getnewargs__')
 
         # Support objects with __getstate__(); this ensures that
         # both __setstate__() and __getstate__() are implemented
         has_getstate = hasattr(obj, '__getstate__')
-        has_getstate_support = has_getstate and hasattr(obj, '__setstate__')
 
         if has_class and not util.is_module(obj):
             module, name = _getclassdetail(obj)
             if self.unpicklable:
                 data[tags.OBJECT] = '%s.%s' % (module, name)
             # Check for a custom handler
-            handler = handlers.get(type(obj))
+            handler = handlers.get(obj.__class__)
             if handler is not None:
                 return handler(self).flatten(obj, data)
+
+            if has_getnewargs:
+                data[tags.NEWARGS] = self._flatten(obj.__getnewargs__())
 
         if util.is_module(obj):
             if self.unpicklable:
@@ -222,7 +228,7 @@ class Pickler(object):
 
         if util.is_dictionary_subclass(obj):
             self._flatten_dict_obj(obj, data)
-            if has_getstate_support:
+            if has_getstate:
                 self._getstate(obj, data)
             return data
 
@@ -231,7 +237,7 @@ class Pickler(object):
             if util.is_sequence_subclass(obj):
                 return self._flatten_sequence_obj(obj, data)
 
-            if has_getstate_support:
+            if has_getstate:
                 return self._getstate(obj, data)
 
             # hack for zope persistent objects; this unghostifies the object
@@ -247,6 +253,15 @@ class Pickler(object):
         if has_slots:
             return self._flatten_newstyle_with_slots(obj, data)
 
+    def _flatten_function(self, obj):
+        if self.unpicklable:
+            data = {tags.FUNCTION: '%s.%s' % (obj.__module__, obj.__name__)}
+        else:
+            data = None
+
+        return data
+
+
     def _flatten_dict_obj(self, obj, data=None):
         """Recursively call flatten() and return json-friendly dict
         """
@@ -259,7 +274,15 @@ class Pickler(object):
 
         # the collections.defaultdict protocol
         if hasattr(obj, 'default_factory') and callable(obj.default_factory):
-            flatten('default_factory', obj.default_factory, data)
+            factory = obj.default_factory
+            if util.is_type(factory):
+                # Reference the type
+                value = _mktyperef(factory)
+            else:
+                # Create an instance from the factory and assume that the
+                # resulting instance is a suitable examplar.
+                value = self._flatten(handlers.CloneFactory(factory()))
+            data['default_factory'] = value
 
         return data
 
@@ -268,13 +291,14 @@ class Pickler(object):
         """
         allslots = [getattr(cls, '__slots__', tuple())
                         for cls in type(obj).mro()]
+        flatten = self._flatten_key_value_pair
         for k in chain(*allslots):
             try:
                 value = getattr(obj, k)
             except AttributeError:
                 # The attribute may have been deleted
                 continue
-            self._flatten_key_value_pair(k, value, data)
+            flatten(k, value, data)
         return data
 
     def _flatten_key_value_pair(self, k, v, data):
@@ -346,3 +370,8 @@ def _getclassdetail(obj):
     module = getattr(cls, '__module__')
     name = getattr(cls, '__name__')
     return util.translate_module_name(module), name
+
+def _getfunctiondetail(fn):
+    module = fn.__module__
+    name = fn.__name__
+    return module, name

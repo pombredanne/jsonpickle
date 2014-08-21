@@ -20,6 +20,7 @@ objects that implement the reduce protocol::
 
 """
 
+import copy
 import sys
 import datetime
 import time
@@ -28,6 +29,7 @@ import decimal
 
 from jsonpickle import util
 from jsonpickle.compat import unicode
+from jsonpickle.compat import queue
 
 
 class Registry(object):
@@ -125,12 +127,12 @@ DatetimeHandler.handles(datetime.time)
 
 
 class SimpleReduceHandler(BaseHandler):
-    """
-    Follow the __reduce__ protocol to pickle an object. As long as the factory
-    and its arguments are pickleable, this should pickle any object that
-    implements the reduce protocol.
-    """
+    """Follow the __reduce__ protocol to pickle an object.
 
+    As long as the factory and its arguments are pickleable, this should
+    pickle any object that implements the reduce protocol.
+
+    """
     def flatten(self, obj, data):
         flatten = self.context.flatten
         data['__reduce__'] = [flatten(i, reset=False) for i in obj.__reduce__()]
@@ -181,3 +183,33 @@ try:
     SimpleReduceHandler.handles(posix.stat_result)
 except ImportError:
     pass
+
+
+class QueueHandler(BaseHandler):
+    """Opaquely serializes Queue objects
+
+    Queues contains mutex and condition variables which cannot be serialized.
+    Construct a new Queue instance when restoring.
+
+    """
+    def flatten(self, obj, data):
+        return data
+
+    def restore(self, obj):
+        return queue.Queue()
+
+QueueHandler.handles(queue.Queue)
+
+
+class CloneFactory(object):
+    """Serialization proxy for collections.defaultdict's default_factory"""
+
+    def __init__(self, exemplar):
+        self.exemplar = exemplar
+
+    def __call__(self, clone=copy.copy):
+        """Create new instances by making copies of the provided exemplar"""
+        return clone(self.exemplar)
+
+    def __repr__(self):
+        return ('<CloneFactory object at 0x%x (%s)>' % (id(self), self.exemplar))

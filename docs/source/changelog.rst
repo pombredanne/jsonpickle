@@ -1,9 +1,22 @@
 Change Log
 ==========
-Version 0.7.2 - TBD, Summer 2014
+Version 0.8.0 - TBD, Fall 2014
+------------------------------
 
-    * We now propery serialize classes that inherit from classes
+    * We now support serializing objects that contain references to
+      module-level functions
+      (`#77 <https://github.com/jsonpickle/jsonpickle/issues/77>`_).
+
+Version 0.7.2 - August 6, 2014
+------------------------------
+
+    * We now properly serialize classes that inherit from classes
       that use `__slots__` and add additional slots in the derived class.
+    * jsonpickle can now serialize objects that implement `__getstate__()` but
+      not `__setstate__()`.  The result of `__getstate__()` is returned as-is
+      when doing a round-trip from Python objects to jsonpickle and back.
+    * Better support for collections.defaultdict with custom factories.
+    * Added support for `queue.Queue` objects.
 
 Version 0.7.1 - May 6, 2014
 ------------------------------

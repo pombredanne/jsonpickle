@@ -11,6 +11,7 @@ import datetime
 
 import jsonpickle
 from jsonpickle.compat import set
+from jsonpickle.compat import queue
 
 
 class Thing(object):
@@ -83,8 +84,37 @@ class ThingWithProps(object):
         return self.identity == other.identity
 
 
+class ThingWithQueue(object):
+
+    def __init__(self):
+        self.child_1 = queue.Queue()
+        self.child_2 = queue.Queue()
+        self.childref_1 = self.child_1
+        self.childref_2 = self.child_2
+
+
+def func(x):
+    return x
+
+
+class ThingWithFunctionRefs(object):
+
+    def __init__(self):
+        self.fn1 = func
+        self.fn2 = func
+
+
 class DictSubclass(dict):
     name = 'Test'
+
+
+class GetstateOnly(object):
+    def __init__(self, a=1, b=2):
+        self.a = a
+        self.b = b
+
+    def __getstate__(self):
+        return [self.a, self.b]
 
 
 class GetstateDict(dict):
@@ -166,6 +196,7 @@ class Document(Node):
 
     def __repr__(self):
         return str(self)
+
 
 class Section(Node):
     def __init__(self, name):
