@@ -1,11 +1,60 @@
 Change Log
 ==========
-Version 0.8.0 - TBD, Fall 2014
+Version 0.9.2 - March 20, 2015
 ------------------------------
+    * Fixes for serializing objects with custom handlers.
+
+    * We now properly serialize deque objects constructed with a `maxlen` parameter.
+
+    * Test suite fixes
+
+Version 0.9.1 - March 15, 2015
+------------------------------
+
+    * Support datetime objects with FixedOffsets.
+
+Version 0.9.0 - January 16, 2015
+--------------------------------
+    * Support for Pickle Protocol v4.
+
+    * We now support serializing defaultdict subclasses that use `self`
+      as their default factory.
+
+    * We now have a decorator syntax for registering custom handlers,
+      and allow custom handlers to register themselves for all subclasses.
+      (`#104 <https://github.com/jsonpickle/jsonpickle/pull/104>`_).
+
+    * We now support serializing types with metaclasses and their
+      instances (e.g., Python 3 `enum`).
+
+    * We now support serializing bytestrings in both Python 2 and Python 3.
+      In Python 2, the `str` type is decoded to UTF-8 whenever possible and
+      serialized as a true bytestring elsewise; in Python 3, bytestrings
+      are explicitly encoded/decoded as bytestrings. Unicode strings are
+      always encoded as is in both Python 2 and Python 3.
+
+    * Added support for serializing numpy arrays, dtypes and scalars
+      (see `jsonpickle.ext.numpy` module).
+
+Version 0.8.0 - September 6, 2014
+---------------------------------
 
     * We now support serializing objects that contain references to
       module-level functions
       (`#77 <https://github.com/jsonpickle/jsonpickle/issues/77>`_).
+
+    * Better Pickle Protocol v2 support
+      (`#78 <https://github.com/jsonpickle/jsonpickle/issues/78>`_).
+
+    * Support for string __slots__ and iterable __slots__
+      (`#67 <https://github.com/jsonpickle/jsonpickle/issues/66>`_)
+      (`#68 <https://github.com/jsonpickle/jsonpickle/issues/67>`_).
+
+    * `encode()` now has a `warn` option that makes jsonpickle emit warnings
+      when encountering objects that cannot be pickled.
+
+    * A Javascript implementation of jsonpickle is now included
+      in the jsonpickleJS directory.
 
 Version 0.7.2 - August 6, 2014
 ------------------------------

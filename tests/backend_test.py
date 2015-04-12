@@ -1,26 +1,32 @@
-import sys
+# -*- coding: utf-8 -*-
+
 import unittest
 from warnings import warn
 
 import jsonpickle
-from jsonpickle._samples import Thing
 from jsonpickle.compat import unicode
 from jsonpickle.compat import PY2
 from jsonpickle.compat import PY3
 from jsonpickle.compat import PY32
 
+from helper import SkippableTest
+
+
+class Thing(object):
+
+    def __init__(self, name):
+        self.name = name
+        self.child = None
+
+
 SAMPLE_DATA = {'things': [Thing('data')]}
 
 
-class BackendTestCase(unittest.TestCase):
+class BackendBase(SkippableTest):
 
     def _is_installed(self, backend):
         if not jsonpickle.util.is_installed(backend):
-            if hasattr(self, 'skipTest'):
-                doit = self.skipTest
-            else:
-                doit = self.fail
-            doit('%s not available; please install' % backend)
+            return self.skip('%s not available; please install' % backend)
 
     def set_backend(self, *args):
         backend = args[0]
@@ -49,22 +55,30 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(expect['things'][0].name, actual['things'][0].name)
         self.assertEqual(expect['things'][0].child, actual['things'][0].child)
 
+    def test_None_dict_key(self):
+        """Ensure that backends produce the same result for None dict keys"""
+        data = {None: None}
+        expect = {'null': None}
+        pickle = jsonpickle.encode(data)
+        actual = jsonpickle.decode(pickle)
+        self.assertEqual(expect, actual)
 
-class JsonTestCase(BackendTestCase):
+
+class JsonTestCase(BackendBase):
     def setUp(self):
         self.set_preferred_backend('json')
 
     def test_backend(self):
         expected_pickled = (
-                '{"things": [{'
-                    '"py/object": "jsonpickle._samples.Thing",'
-                    ' "name": "data",'
-                    ' "child": null}'
-                ']}')
+            '{"things": [{'
+            '"py/object": "backend_test.Thing", '
+            '"name": "data", '
+            '"child": null} '
+            ']}')
         self.assertEncodeDecode(expected_pickled)
 
 
-class SimpleJsonTestCase(BackendTestCase):
+class SimpleJsonTestCase(BackendBase):
     def setUp(self):
         if PY32:
             return
@@ -72,14 +86,13 @@ class SimpleJsonTestCase(BackendTestCase):
 
     def test_backend(self):
         if PY32:
-            self.skipTest('no simplejson for python3.2')
-            return
+            return self.skip('no simplejson for python3.2')
         expected_pickled = (
-                '{"things": [{'
-                    '"py/object": "jsonpickle._samples.Thing",'
-                    ' "name": "data",'
-                    ' "child": null}'
-                ']}')
+            '{"things": [{'
+            '"py/object": "backend_test.Thing", '
+            '"name": "data", '
+            '"child": null}'
+            ']}')
         self.assertEncodeDecode(expected_pickled)
 
 
@@ -93,70 +106,68 @@ def has_module(module):
     return True
 
 
-class DemjsonTestCase(BackendTestCase):
+class DemjsonTestCase(BackendBase):
     def setUp(self):
         if PY2:
             self.set_preferred_backend('demjson')
 
     def test_backend(self):
         if PY3:
-            self.skipTest('no demjson for python3')
-            return
+            return self.skip('no demjson for python3')
         expected_pickled = unicode(
-                '{"things":[{'
-                    '"child":null,'
-                    '"name":"data",'
-                    '"py/object":"jsonpickle._samples.Thing"}'
-                ']}')
+            '{"things":[{'
+            '"child":null,'
+            '"name":"data",'
+            '"py/object":"backend_test.Thing"}'
+            ']}')
         self.assertEncodeDecode(expected_pickled)
 
 
-class JsonlibTestCase(BackendTestCase):
+class JsonlibTestCase(BackendBase):
     def setUp(self):
         if PY2:
             self.set_preferred_backend('jsonlib')
 
     def test_backend(self):
         if PY3:
-            self.skipTest('no jsonlib for python3')
-            return
+            return self.skip('no jsonlib for python3')
         expected_pickled = (
-                '{"things":[{'
-                    '"py\/object":"jsonpickle._samples.Thing",'
-                    '"name":"data","child":null}'
-                ']}')
+            '{"things":[{'
+            '"py\/object":"backend_test.Thing",'
+            '"name":"data","child":null}'
+            ']}')
         self.assertEncodeDecode(expected_pickled)
 
 
-class YajlTestCase(BackendTestCase):
+class YajlTestCase(BackendBase):
     def setUp(self):
         if PY2:
             self.set_preferred_backend('yajl')
 
     def test_backend(self):
         if PY3:
-            self.skipTest('no yajl for python3')
-            return
+            return self.skip('no yajl for python3')
         expected_pickled = (
-                '{"things":[{'
-                    '"py/object":"jsonpickle._samples.Thing",'
-                    '"name":"data","child":null}'
-                ']}')
+            '{"things":[{'
+            '"py/object":"backend_test.Thing",'
+            '"name":"data","child":null}'
+            ']}')
         self.assertEncodeDecode(expected_pickled)
 
 
-class UJsonTestCase(BackendTestCase):
+class UJsonTestCase(BackendBase):
 
     def setUp(self):
         self.set_preferred_backend('ujson')
 
     def test_backend(self):
         expected_pickled = (
-                '{"things":[{'
-                    '"py\/object":"jsonpickle._samples.Thing",'
-                    '"name":"data","child":null}'
-                ']}')
+            '{"things":[{'
+            '"py\/object":"backend_test.Thing",'
+            '"name":"data","child":null}'
+            ']}')
         self.assertEncodeDecode(expected_pickled)
+
 
 def suite():
     suite = unittest.TestSuite()

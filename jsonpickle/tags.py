@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 """The jsonpickle.tags module provides the custom tags
 used for pickling and unpickling Python objects.
 
@@ -9,25 +11,37 @@ that need to be specially handled.
 from jsonpickle.compat import set
 
 
+BYTES = 'py/bytes'
 FUNCTION = 'py/function'
 ID = 'py/id'
+INITARGS = 'py/initargs'
+ITERATOR = 'py/iterator'
 JSON_KEY = 'json://'
 NEWARGS = 'py/newargs'
+NEWARGSEX = 'py/newargsex'
+NEWOBJ = 'py/newobj'
 OBJECT = 'py/object'
-REPR = 'py/repr'
+REDUCE = 'py/reduce'
 REF = 'py/ref'
-STATE = 'py/state'
-SET = 'py/set'
+REPR = 'py/repr'
 SEQ = 'py/seq'
+SET = 'py/set'
+STATE = 'py/state'
 TUPLE = 'py/tuple'
 TYPE = 'py/type'
 
 # All reserved tag names
 RESERVED = set([
+    BYTES,
     FUNCTION,
     ID,
+    INITARGS,
+    ITERATOR,
     NEWARGS,
+    NEWARGSEX,
+    NEWOBJ,
     OBJECT,
+    REDUCE,
     REF,
     REPR,
     SEQ,

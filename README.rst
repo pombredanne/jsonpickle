@@ -17,6 +17,14 @@ Install
 
     python setup.py install
 
+jsonpickleJS
+============
+`jsonpickleJS <https://github.com/cuthbertLab/jsonpickleJS>`_
+is a javascript implementation of jsonpickle by Michael Scott Cuthbert.
+jsonpickleJS can be extremely useful for projects that have parallel data
+structures between Python and Javascript.
+
 License
 =======
 Licensed under the BSD License. See COPYING for details.
+See jsonpickleJS/LICENSE for details about the jsonpickleJS license.
